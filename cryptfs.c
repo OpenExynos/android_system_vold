@@ -75,6 +75,9 @@
 
 #define HASH_COUNT 2000
 #define KEY_LEN_BYTES 16
+#ifdef USE_FMP_DM_CRYPT
+#define FMP_KEY_LEN_BYTES 64
+#endif
 #define IV_LEN_BYTES 16
 
 #define KEY_IN_FOOTER  "footer"
@@ -96,7 +99,11 @@
 
 char *me = "cryptfs";
 
+#ifdef USE_FMP_DM_CRYPT
+static unsigned char saved_master_key[FMP_KEY_LEN_BYTES];
+#else
 static unsigned char saved_master_key[KEY_LEN_BYTES];
+#endif
 static char *saved_mount_point;
 static int  master_key_saved = 0;
 static struct crypt_persist_data *persist_data = NULL;
@@ -248,6 +255,12 @@ static int keymaster_create_key(struct crypt_mnt_ftr *ftr)
         SLOGE("Cryptfs bug: keymaster_init succeeded but didn't initialize a device");
         rc = -1;
         goto out;
+    }
+
+    if (!key_size) {
+	SLOGE("Failed to get keymaster key");
+	rc = -1;
+	goto out;
     }
 
     if (key_size > KEYMASTER_BLOB_SIZE) {
@@ -1368,8 +1381,13 @@ static int encrypt_master_key(const char *passwd, const unsigned char *salt,
     EVP_CIPHER_CTX_set_padding(&e_ctx, 0); /* Turn off padding as our data is block aligned */
 
     /* Encrypt the master key */
+#ifdef USE_FMP_DM_CRYPT
+    if (! EVP_EncryptUpdate(&e_ctx, encrypted_master_key, &encrypted_len,
+                              decrypted_master_key, FMP_KEY_LEN_BYTES)) {
+#else
     if (! EVP_EncryptUpdate(&e_ctx, encrypted_master_key, &encrypted_len,
                             decrypted_master_key, KEY_LEN_BYTES)) {
+#endif
         SLOGE("EVP_EncryptUpdate failed\n");
         return -1;
     }
@@ -1378,7 +1396,11 @@ static int encrypt_master_key(const char *passwd, const unsigned char *salt,
         return -1;
     }
 
+#ifdef USE_FMP_DM_CRYPT
+    if (encrypted_len + final_len != FMP_KEY_LEN_BYTES) {
+#else
     if (encrypted_len + final_len != KEY_LEN_BYTES) {
+#endif
         SLOGE("EVP_Encryption length check failed with %d, %d bytes\n", encrypted_len, final_len);
         return -1;
     }
@@ -1429,15 +1451,24 @@ static int decrypt_master_key_aux(const char *passwd, unsigned char *salt,
   }
   EVP_CIPHER_CTX_set_padding(&d_ctx, 0); /* Turn off padding as our data is block aligned */
   /* Decrypt the master key */
+#ifdef USE_FMP_DM_CRYPT
+  if (! EVP_DecryptUpdate(&d_ctx, decrypted_master_key, &decrypted_len,
+                            encrypted_master_key, FMP_KEY_LEN_BYTES)) {
+#else
   if (! EVP_DecryptUpdate(&d_ctx, decrypted_master_key, &decrypted_len,
                             encrypted_master_key, KEY_LEN_BYTES)) {
+#endif
     return -1;
   }
   if (! EVP_DecryptFinal_ex(&d_ctx, decrypted_master_key + decrypted_len, &final_len)) {
     return -1;
   }
 
+#ifdef USE_FMP_DM_CRYPT
+  if (decrypted_len + final_len != FMP_KEY_LEN_BYTES) {
+#else
   if (decrypted_len + final_len != KEY_LEN_BYTES) {
+#endif
     return -1;
   }
 
@@ -1490,7 +1521,11 @@ static int decrypt_master_key(const char *passwd, unsigned char *decrypted_maste
 static int create_encrypted_random_key(char *passwd, unsigned char *master_key, unsigned char *salt,
         struct crypt_mnt_ftr *crypt_ftr) {
     int fd;
+#ifdef USE_FMP_DM_CRYPT
+    unsigned char key_buf[FMP_KEY_LEN_BYTES];
+#else
     unsigned char key_buf[KEY_LEN_BYTES];
+#endif
 
     /* Get some random bits for a key */
     fd = open("/dev/urandom", O_RDONLY|O_CLOEXEC);
@@ -1713,7 +1748,7 @@ static int cryptfs_restart_internal(int restart_main)
         property_set("vold.decrypt", "trigger_load_persist_props");
         /* Create necessary paths on /data */
         if (prep_data_fs()) {
-            return -1;
+	    return -100;
         }
 
         /* startup service classes main and late_start */
@@ -1822,7 +1857,11 @@ static int test_mount_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
                                    char *passwd, char *mount_point, char *label)
 {
   /* Allocate enough space for a 256 bit key, but we may use less */
+#ifdef USE_FMP_DM_CRYPT
+  unsigned char decrypted_master_key[64];
+#else
   unsigned char decrypted_master_key[32];
+#endif
   char crypto_blkdev[MAXPATHLEN];
   char real_blkdev[MAXPATHLEN];
   char tmp_mount_point[64];
@@ -1913,7 +1952,11 @@ static int test_mount_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 
     /* Also save a the master key so we can reencrypted the key
      * the key when we want to change the password on it. */
+#ifdef USE_FMP_DM_CRYPT
+    memcpy(saved_master_key, decrypted_master_key, FMP_KEY_LEN_BYTES);
+#else
     memcpy(saved_master_key, decrypted_master_key, KEY_LEN_BYTES);
+#endif
     saved_mount_point = strdup(mount_point);
     master_key_saved = 1;
     SLOGD("%s(): Master key saved\n", __FUNCTION__);
@@ -2057,7 +2100,11 @@ int cryptfs_verify_passwd(char *passwd)
 {
     struct crypt_mnt_ftr crypt_ftr;
     /* Allocate enough space for a 256 bit key, but we may use less */
+#ifdef USE_FMP_DM_CRYPT
+    unsigned char decrypted_master_key[64];
+#else
     unsigned char decrypted_master_key[32];
+#endif
     char encrypted_state[PROPERTY_VALUE_MAX];
     int rc;
 
@@ -2114,7 +2161,11 @@ static int cryptfs_init_crypt_mnt_ftr(struct crypt_mnt_ftr *ftr)
     ftr->major_version = CURRENT_MAJOR_VERSION;
     ftr->minor_version = CURRENT_MINOR_VERSION;
     ftr->ftr_size = sizeof(struct crypt_mnt_ftr);
+#ifdef USE_FMP_DM_CRYPT
+    ftr->keysize = FMP_KEY_LEN_BYTES;
+#else
     ftr->keysize = KEY_LEN_BYTES;
+#endif
 
     switch (keymaster_check_compatibility()) {
     case 1:
@@ -2905,7 +2956,11 @@ int cryptfs_enable_internal(char *howarg, int crypt_type, char *passwd,
 {
     int how = 0;
     char crypto_blkdev[MAXPATHLEN], real_blkdev[MAXPATHLEN];
+#ifdef USE_FMP_DM_CRYPT
+    unsigned char decrypted_master_key[FMP_KEY_LEN_BYTES];
+#else
     unsigned char decrypted_master_key[KEY_LEN_BYTES];
+#endif
     int rc=-1, i;
     struct crypt_mnt_ftr crypt_ftr;
     struct crypt_persist_data *pdata;
@@ -3048,6 +3103,10 @@ int cryptfs_enable_internal(char *howarg, int crypt_type, char *passwd,
            On successfully completing encryption, remove this flag */
         crypt_ftr.flags |= CRYPT_INCONSISTENT_STATE;
         crypt_ftr.crypt_type = crypt_type;
+
+#ifdef USE_FMP_DM_CRYPT
+	strlcpy((char *)crypt_ftr.crypto_type_name, "aes-xts-fmp", MAX_CRYPTO_TYPE_NAME_LEN);
+#else
 #ifndef CONFIG_HW_DISK_ENCRYPTION
         strlcpy((char *)crypt_ftr.crypto_type_name, "aes-cbc-essiv:sha256", MAX_CRYPTO_TYPE_NAME_LEN);
 #else
@@ -3064,6 +3123,7 @@ int cryptfs_enable_internal(char *howarg, int crypt_type, char *passwd,
           SLOGE("Error initializing device encryption hardware key. rc = %d", rc);
           goto error_shutting_down;
         }
+#endif
 #endif
 
         /* Make an encrypted master key */
@@ -3248,7 +3308,11 @@ int cryptfs_changepw(int crypt_type, const char *newpw)
 
     struct crypt_mnt_ftr crypt_ftr;
     int rc;
-
+#ifdef USE_FMP_DM_CRYPT
+    unsigned char decrypted_master_key[FMP_KEY_LEN_BYTES];
+#else
+    unsigned char decrypted_master_key[KEY_LEN_BYTES];
+#endif
     /* This is only allowed after we've successfully decrypted the master key */
     if (!master_key_saved) {
         SLOGE("Key not saved, aborting");
@@ -3639,8 +3703,13 @@ int cryptfs_mount_default_encrypted(void)
             property_set("vold.decrypt", "trigger_restart_min_framework");
             return 0;
         } else if (cryptfs_check_passwd(DEFAULT_PASSWORD) == 0) {
+	    int ret;
             SLOGD("Password is default - restarting filesystem");
-            cryptfs_restart_internal(0);
+            ret = cryptfs_restart_internal(0);
+	    if (ret == -100) {
+		SLOGE("Restart framework due to post_fs_data timeout!\n");
+		cryptfs_restart_internal(0);
+	    }
             return 0;
         } else {
             SLOGE("Encrypted, default crypt type but can't decrypt");

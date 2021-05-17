@@ -101,7 +101,7 @@ public:
         }
 
         bool matches(const std::string& sysPath) {
-            return !fnmatch(mSysPattern.c_str(), sysPath.c_str(), 0);
+            return !fnmatch(mSysPattern.c_str(), sysPath.c_str(), FNM_LEADING_DIR);
         }
 
         const std::string& getNickname() { return mNickname; }

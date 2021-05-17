@@ -39,7 +39,11 @@
 
 #define MAX_CRYPTO_TYPE_NAME_LEN 64
 
+#ifdef USE_FMP_DM_CRYPT
+#define MAX_KEY_LEN 64
+#else
 #define MAX_KEY_LEN 48
+#endif
 #define SALT_LEN 16
 #define SCRYPT_LEN 32
 

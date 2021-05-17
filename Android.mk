@@ -77,6 +77,10 @@ LOCAL_MODULE_TAGS := eng tests
 LOCAL_CFLAGS := $(vold_cflags)
 LOCAL_CONLYFLAGS := $(vold_conlyflags)
 
+ifeq ($(BOARD_USES_FMP_DM_CRYPT), true)
+LOCAL_CFLAGS := -DUSE_FMP_DM_CRYPT
+endif
+
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -96,6 +100,10 @@ ifeq ($(TARGET_HW_DISK_ENCRYPTION),true)
 LOCAL_C_INCLUDES += $(TARGET_CRYPTFS_HW_PATH)
 common_shared_libraries += libcryptfs_hw
 LOCAL_CFLAGS += -DCONFIG_HW_DISK_ENCRYPTION
+endif
+
+ifeq ($(BOARD_USES_FMP_DM_CRYPT), true)
+LOCAL_CFLAGS := -DUSE_FMP_DM_CRYPT
 endif
 
 LOCAL_SHARED_LIBRARIES := $(common_shared_libraries)
